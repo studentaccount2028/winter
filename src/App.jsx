@@ -624,7 +624,11 @@ const PRAYING_POSITIONS = [
 function PrayingGuy({ position }) {
   const group = useRef()
   const fbx = useLoader(FBXLoader, '/models/Praying.fbx')
-  const clone = useMemo(() => fbx.clone(true), [fbx])
+  const clone = useMemo(() => {
+    const c = skeletonClone(fbx)
+    c.animations = fbx.animations
+    return c
+  }, [fbx])
   const { actions } = useAnimations(clone.animations, group)
 
   useEffect(() => {
