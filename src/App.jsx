@@ -4,6 +4,7 @@ import { PointerLockControls, Grid, Environment, useGLTF, MeshReflectorMaterial,
 import { RepeatWrapping, PlaneGeometry, Color, Object3D, Quaternion, Vector3 } from 'three'
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { io } from 'socket.io-client'
 import { EffectComposer, Bloom, ToneMapping, SMAA, N8AO, GodRays } from '@react-three/postprocessing'
 import { ToneMappingMode } from 'postprocessing'
@@ -614,50 +615,33 @@ function Car() {
 
 // ─── Zombie ──────────────────────────────────────────────────────────────────
 
-const ZOMBIE_SPAWNS = [
-  [-6, -20], [10, -15], [-14, -8], [5, -28], [18, -22], [-3, -35],
+const PRAYING_POSITIONS = [
+  [5, 0, -12],
+  [-8, 0, -18],
+  [14, 0, -8],
 ]
 
-function Zombie({ startX, startZ }) {
+function PrayingGuy({ position }) {
   const group = useRef()
-  const { scene, animations } = useGLTF('/models/zombie/zombie_walk.gltf')
-  const clone = useMemo(() => skeletonClone(scene), [scene])
-  const { actions } = useAnimations(animations, group)
-  const pos = useRef([startX, 0, startZ])
+  const fbx = useLoader(FBXLoader, '/models/Praying.fbx')
+  const clone = useMemo(() => fbx.clone(true), [fbx])
+  const { actions } = useAnimations(clone.animations, group)
 
   useEffect(() => {
-    const a = actions['mixamo.com']
-    if (a) a.play()
+    const first = Object.values(actions)[0]
+    if (first) first.play()
   }, [actions])
 
-  useFrame((state, delta) => {
-    const cam = state.camera.position
-    const dx = cam.x - pos.current[0]
-    const dz = cam.z - pos.current[2]
-    const dist = Math.sqrt(dx * dx + dz * dz)
-    const SPEED = 1.8
-    if (dist > 1.8) {
-      pos.current[0] += (dx / dist) * SPEED * delta
-      pos.current[2] += (dz / dist) * SPEED * delta
-    }
-    if (group.current) {
-      group.current.position.set(pos.current[0], 0, pos.current[2])
-      group.current.rotation.y = Math.atan2(dx, dz)
-    }
-  })
-
-  return <primitive ref={group} object={clone} scale={0.022} castShadow />
+  return <primitive ref={group} object={clone} position={position} scale={0.022} castShadow />
 }
 
-function Zombies() {
+function PrayingGuys() {
   return (
     <Suspense fallback={null}>
-      {ZOMBIE_SPAWNS.map(([x, z], i) => <Zombie key={i} startX={x} startZ={z} />)}
+      {PRAYING_POSITIONS.map((pos, i) => <PrayingGuy key={i} position={pos} />)}
     </Suspense>
   )
 }
-
-useGLTF.preload('/models/zombie/zombie_walk.gltf')
 
 // ─── Venice Sunset ────────────────────────────────────────────────────────────
 
@@ -720,7 +704,7 @@ function SunsetScene() {
       <Multiplayer />
       <Shooter />
       <Coins />
-      <Zombies />
+      <PrayingGuys />
 
       <Physics gravity={[0, -20, 0]}>
         <RigidBody type="fixed">
