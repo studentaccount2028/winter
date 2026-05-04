@@ -11,7 +11,7 @@ const io = new Server(httpServer, { cors: { origin: '*' } })
 const DIST = path.join(__dirname, '../dist')
 if (fs.existsSync(DIST)) {
   app.use(express.static(DIST))
-  app.get('*', (_, res) => res.sendFile(path.join(DIST, 'index.html')))
+  app.get(/.*/, (_, res) => res.sendFile(path.join(DIST, 'index.html')))
 }
 
 const USERS_FILE = path.join(__dirname, 'users.json')
@@ -49,6 +49,17 @@ io.on('connection', socket => {
   socket.on('join_room', roomId => {
     const p = players[socket.id]
     if (!p) return
+
+    if (p.room === roomId) {
+      // Respawn in same room — just resync state without broadcasting leave/join
+      const existing = {}
+      for (const [id, other] of Object.entries(players)) {
+        if (id !== socket.id && other.room === roomId)
+          existing[id] = { x: other.x, y: other.y, z: other.z, ry: other.ry }
+      }
+      socket.emit('room_players', existing)
+      return
+    }
 
     // Leave previous room
     if (p.room) {
