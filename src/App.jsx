@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useMemo, useCallback, Suspense, createContext, useContext } from 'react'
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
-import { PointerLockControls, Grid, Environment, useGLTF, MeshReflectorMaterial, Lightformer, Sparkles, Stars, useTexture } from '@react-three/drei'
+import { PointerLockControls, Grid, Environment, useGLTF, MeshReflectorMaterial, Lightformer, Sparkles, Stars, useTexture, useAnimations } from '@react-three/drei'
 import { RepeatWrapping, PlaneGeometry, Color, Object3D, Quaternion, Vector3 } from 'three'
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js'
 import { io } from 'socket.io-client'
 import { EffectComposer, Bloom, ToneMapping, SMAA, N8AO, GodRays } from '@react-three/postprocessing'
@@ -22,6 +23,7 @@ function DeskModel(props) {
   return <primitive object={scene} castShadow receiveShadow {...props} />
 }
 useGLTF.preload('/models/metal_office_desk_4k.gltf')
+useGLTF.preload('/models/zombie/scene.gltf')
 
 function Player() {
   const controlsRef = useRef()
@@ -323,8 +325,16 @@ function _boxWallActive(pos, minX, maxX, minZ, maxZ, topY) {
   return pos.x > x0 && pos.x < x1 && pos.z > z0 && pos.z < z1
 }
 
+// Per-scene room walls — set by enclosed scenes, cleared on unmount
+let _roomWalls = []
+
 function resolveBoxX(pos) {
   for (const [minX, maxX, minZ, maxZ, topY] of BOX_COLLIDERS) {
+    if (!_boxWallActive(pos, minX, maxX, minZ, maxZ, topY)) continue
+    const x0 = minX - PLAYER_RADIUS, x1 = maxX + PLAYER_RADIUS
+    pos.x = pos.x < (x0 + x1) * 0.5 ? x0 : x1
+  }
+  for (const [minX, maxX, minZ, maxZ, topY] of _roomWalls) {
     if (!_boxWallActive(pos, minX, maxX, minZ, maxZ, topY)) continue
     const x0 = minX - PLAYER_RADIUS, x1 = maxX + PLAYER_RADIUS
     pos.x = pos.x < (x0 + x1) * 0.5 ? x0 : x1
@@ -333,6 +343,11 @@ function resolveBoxX(pos) {
 
 function resolveBoxZ(pos) {
   for (const [minX, maxX, minZ, maxZ, topY] of BOX_COLLIDERS) {
+    if (!_boxWallActive(pos, minX, maxX, minZ, maxZ, topY)) continue
+    const z0 = minZ - PLAYER_RADIUS, z1 = maxZ + PLAYER_RADIUS
+    pos.z = pos.z < (z0 + z1) * 0.5 ? z0 : z1
+  }
+  for (const [minX, maxX, minZ, maxZ, topY] of _roomWalls) {
     if (!_boxWallActive(pos, minX, maxX, minZ, maxZ, topY)) continue
     const z0 = minZ - PLAYER_RADIUS, z1 = maxZ + PLAYER_RADIUS
     pos.z = pos.z < (z0 + z1) * 0.5 ? z0 : z1
@@ -358,6 +373,10 @@ function resolveRocks(pos) {
 function getObjectSurfaceY(pos) {
   let best = -Infinity
   for (const [minX, maxX, minZ, maxZ, topY] of BOX_COLLIDERS) {
+    if (pos.x > minX && pos.x < maxX && pos.z > minZ && pos.z < maxZ)
+      best = Math.max(best, topY)
+  }
+  for (const [minX, maxX, minZ, maxZ, topY] of _roomWalls) {
     if (pos.x > minX && pos.x < maxX && pos.z > minZ && pos.z < maxZ)
       best = Math.max(best, topY)
   }
@@ -593,6 +612,53 @@ function Car() {
   )
 }
 
+// ─── Zombie ──────────────────────────────────────────────────────────────────
+
+const ZOMBIE_SPAWNS = [
+  [-6, -20], [10, -15], [-14, -8], [5, -28], [18, -22], [-3, -35],
+]
+
+function Zombie({ startX, startZ }) {
+  const group = useRef()
+  const { scene, animations } = useGLTF('/models/zombie/zombie_walk.gltf')
+  const clone = useMemo(() => skeletonClone(scene), [scene])
+  const { actions } = useAnimations(animations, group)
+  const pos = useRef([startX, 0, startZ])
+
+  useEffect(() => {
+    const a = actions['mixamo.com']
+    if (a) a.play()
+  }, [actions])
+
+  useFrame((state, delta) => {
+    const cam = state.camera.position
+    const dx = cam.x - pos.current[0]
+    const dz = cam.z - pos.current[2]
+    const dist = Math.sqrt(dx * dx + dz * dz)
+    const SPEED = 1.8
+    if (dist > 1.8) {
+      pos.current[0] += (dx / dist) * SPEED * delta
+      pos.current[2] += (dz / dist) * SPEED * delta
+    }
+    if (group.current) {
+      group.current.position.set(pos.current[0], 0, pos.current[2])
+      group.current.rotation.y = Math.atan2(dx, dz)
+    }
+  })
+
+  return <primitive ref={group} object={clone} scale={0.022} castShadow />
+}
+
+function Zombies() {
+  return (
+    <Suspense fallback={null}>
+      {ZOMBIE_SPAWNS.map(([x, z], i) => <Zombie key={i} startX={x} startZ={z} />)}
+    </Suspense>
+  )
+}
+
+useGLTF.preload('/models/zombie/zombie_walk.gltf')
+
 // ─── Venice Sunset ────────────────────────────────────────────────────────────
 
 function SunsetScene() {
@@ -654,6 +720,7 @@ function SunsetScene() {
       <Multiplayer />
       <Shooter />
       <Coins />
+      <Zombies />
 
       <Physics gravity={[0, -20, 0]}>
         <RigidBody type="fixed">
@@ -728,6 +795,241 @@ function NightScene() {
       <Multiplayer />
       <Shooter />
       <Coins />
+    </>
+  )
+}
+
+// ─── Snowfall (Stronghold) ────────────────────────────────────────────────────
+
+// [minX, maxX, minZ, maxZ, topY] — walls + floor for the enclosed room
+const SNOWFALL_COLLIDERS = [
+  [-9, 9,  8.75, 10.75, 4.5], // north wall
+  [-9, 9, -10.75, -8.75, 4.5], // south wall
+  [ 8.75, 10.75, -9, 9, 4.5], // east wall
+  [-10.75, -8.75, -9, 9, 4.5], // west wall
+  [-8.75, 8.75, -8.75, 8.75, 0], // floor
+]
+
+function ZombieModel({ position, rotation }) {
+  const { scene } = useGLTF('/models/zombie/scene.gltf')
+  const clone = useMemo(() => scene.clone(true), [scene])
+  // Model is Z-up from its exporter, scale ~97 units tall → need 0.018 to reach ~1.75m
+  return <primitive object={clone} position={position} rotation={rotation} scale={0.018} />
+}
+
+function Chandelier({ position }) {
+  const lightRef = useRef()
+  const t0 = useMemo(() => Math.random() * 1000, [])
+
+  useFrame(() => {
+    if (!lightRef.current) return
+    const t = (performance.now() + t0) / 1000
+    const flicker = Math.sin(t * 4.9) * 0.5 + Math.sin(t * 11.1) * 0.2 + Math.sin(t * 2.3) * 0.6
+    lightRef.current.intensity = 10 + flicker
+  })
+
+  const candleAngles = useMemo(() => Array.from({ length: 8 }, (_, i) => (i / 8) * Math.PI * 2), [])
+
+  return (
+    <group position={position}>
+      {/* Chain */}
+      <mesh position={[0, 0.38, 0]}>
+        <cylinderGeometry args={[0.025, 0.025, 0.75, 6]} />
+        <meshStandardMaterial color="#1a1a14" roughness={0.5} metalness={0.85} />
+      </mesh>
+      {/* Outer ring */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.72, 0.055, 7, 28]} />
+        <meshStandardMaterial color="#2c2010" roughness={0.4} metalness={0.75} />
+      </mesh>
+      {/* Cross bars */}
+      <mesh>
+        <boxGeometry args={[1.44, 0.045, 0.045]} />
+        <meshStandardMaterial color="#2c2010" roughness={0.4} metalness={0.75} />
+      </mesh>
+      <mesh>
+        <boxGeometry args={[0.045, 0.045, 1.44]} />
+        <meshStandardMaterial color="#2c2010" roughness={0.4} metalness={0.75} />
+      </mesh>
+      {/* Candles */}
+      {candleAngles.map((angle, i) => {
+        const cx = Math.cos(angle) * 0.72
+        const cz = Math.sin(angle) * 0.72
+        return (
+          <group key={i} position={[cx, -0.07, cz]}>
+            <mesh>
+              <cylinderGeometry args={[0.038, 0.038, 0.15, 6]} />
+              <meshStandardMaterial color="#ede5cc" roughness={0.9} />
+            </mesh>
+            <mesh position={[0, 0.12, 0]}>
+              <sphereGeometry args={[0.045, 5, 4]} />
+              <meshStandardMaterial color="#ffdd55" emissive="#ffaa00" emissiveIntensity={12} toneMapped={false} />
+            </mesh>
+          </group>
+        )
+      })}
+      <pointLight ref={lightRef} color="#ffcc66" intensity={10} distance={24} decay={1.1} />
+    </group>
+  )
+}
+
+function Torch({ position }) {
+  const lightRef = useRef()
+  const t0 = useMemo(() => Math.random() * 1000, [])
+
+  useFrame(() => {
+    if (!lightRef.current) return
+    const t = (performance.now() + t0) / 1000
+    const flicker = Math.sin(t * 7.3) * 0.18 + Math.sin(t * 13.7) * 0.12 + Math.sin(t * 3.1) * 0.22
+    lightRef.current.intensity = 3.2 + flicker
+  })
+
+  return (
+    <group position={position}>
+      <mesh position={[0, -0.22, 0]}>
+        <cylinderGeometry args={[0.04, 0.06, 0.42, 6]} />
+        <meshStandardMaterial color="#3a2008" roughness={0.95} />
+      </mesh>
+      <mesh position={[0, 0.06, 0]}>
+        <sphereGeometry args={[0.09, 6, 5]} />
+        <meshStandardMaterial color="#ff7700" emissive="#ff5500" emissiveIntensity={7} toneMapped={false} />
+      </mesh>
+      <mesh position={[0, 0.06, 0]}>
+        <sphereGeometry args={[0.16, 5, 4]} />
+        <meshStandardMaterial color="#ff9900" emissive="#ff8800" emissiveIntensity={2} toneMapped={false} transparent opacity={0.25} />
+      </mesh>
+      <pointLight ref={lightRef} color="#ff9944" intensity={3.5} distance={16} decay={1.5} />
+    </group>
+  )
+}
+
+function FallingSnow() {
+  const count = 280
+  const { positions, speeds } = useMemo(() => {
+    const positions = new Float32Array(count * 3)
+    const speeds = new Float32Array(count)
+    for (let i = 0; i < count; i++) {
+      positions[i * 3]     = (Math.random() - 0.5) * 16
+      positions[i * 3 + 1] = Math.random() * 4.4
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 16
+      speeds[i] = 0.28 + Math.random() * 0.38
+    }
+    return { positions, speeds }
+  }, [])
+
+  const ref = useRef()
+  useFrame((_, delta) => {
+    if (!ref.current) return
+    const attr = ref.current.geometry.attributes.position
+    for (let i = 0; i < count; i++) {
+      const y = attr.getY(i) - speeds[i] * delta
+      attr.setY(i, y < 0.05 ? 4.35 : y)
+    }
+    attr.needsUpdate = true
+  })
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" array={positions} count={count} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial color="#d0dff5" size={0.055} transparent opacity={0.55} sizeAttenuation />
+    </points>
+  )
+}
+
+function SnowfallScene() {
+  useEffect(() => {
+    _roomWalls = SNOWFALL_COLLIDERS
+    return () => { _roomWalls = [] }
+  }, [])
+
+  const stoneDark = { color: '#3a3530', roughness: 0.97, metalness: 0 }
+  const stoneMid  = { color: '#302c28', roughness: 0.95, metalness: 0 }
+
+  const torchPositions = [
+    [-3.5, 2.1,  8.6], [ 3.5, 2.1,  8.6],
+    [-3.5, 2.1, -8.6], [ 3.5, 2.1, -8.6],
+    [ 8.6, 2.1, -3.5], [ 8.6, 2.1,  3.5],
+    [-8.6, 2.1, -3.5], [-8.6, 2.1,  3.5],
+  ]
+  const chandelierPositions = [
+    [0,    4.0,  0   ],
+    [-4.5, 4.0,  4.5 ],
+    [ 4.5, 4.0, -4.5 ],
+    [-4.5, 4.0, -4.5 ],
+    [ 4.5, 4.0,  4.5 ],
+  ]
+
+  return (
+    <>
+      <color attach="background" args={['#08080d']} />
+      <fogExp2 attach="fog" args={['#08080d', 0.03]} />
+
+      <ambientLight intensity={0.55} color="#6a4820" />
+
+      {/* Floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+        <planeGeometry args={[18, 18, 6, 6]} />
+        <meshStandardMaterial {...stoneMid} />
+      </mesh>
+
+      {/* Ceiling */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 4.5, 0]}>
+        <planeGeometry args={[18, 18]} />
+        <meshStandardMaterial {...stoneDark} />
+      </mesh>
+
+      {/* Walls */}
+      <mesh position={[0, 2.25,  9]} castShadow receiveShadow>
+        <boxGeometry args={[18, 4.5, 0.5]} />
+        <meshStandardMaterial {...stoneDark} />
+      </mesh>
+      <mesh position={[0, 2.25, -9]} castShadow receiveShadow>
+        <boxGeometry args={[18, 4.5, 0.5]} />
+        <meshStandardMaterial {...stoneDark} />
+      </mesh>
+      <mesh position={[ 9, 2.25, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.5, 4.5, 18]} />
+        <meshStandardMaterial {...stoneDark} />
+      </mesh>
+      <mesh position={[-9, 2.25, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.5, 4.5, 18]} />
+        <meshStandardMaterial {...stoneDark} />
+      </mesh>
+
+      {/* Corner pillars */}
+      {[[-8.25, -8.25], [8.25, -8.25], [-8.25, 8.25], [8.25, 8.25]].map(([x, z], i) => (
+        <mesh key={i} position={[x, 2.25, z]} castShadow receiveShadow>
+          <boxGeometry args={[1.2, 4.5, 1.2]} />
+          <meshStandardMaterial color="#2a2a2a" roughness={0.98} />
+        </mesh>
+      ))}
+
+      {/* Chandeliers */}
+      {chandelierPositions.map((pos, i) => <Chandelier key={i} position={pos} />)}
+
+      {/* Torches */}
+      {torchPositions.map((pos, i) => <Torch key={i} position={pos} />)}
+
+      {/* Zombies */}
+      <ZombieModel position={[ 3,  0,  3]} rotation={[0,  Math.PI * 1.25, 0]} />
+      <ZombieModel position={[-4,  0, -3]} rotation={[0,  Math.PI * 0.3,  0]} />
+      <ZombieModel position={[ 0,  0, -5]} rotation={[0,  0,              0]} />
+
+      <FallingSnow />
+
+      <EffectComposer multisampling={0}>
+        <N8AO aoRadius={0.9} intensity={4} aoSamples={16}
+          denoiseSamples={4} denoiseRadius={8} distanceFalloff={1} depthAwareUpsampling />
+        <SMAA />
+        <Bloom luminanceThreshold={0.4} luminanceSmoothing={0.025} intensity={2.5} mipmapBlur />
+        <ToneMapping mode={ToneMappingMode.REINHARD2_ADAPTIVE} />
+      </EffectComposer>
+
+      <Player />
+      <Multiplayer />
+      <Shooter />
     </>
   )
 }
@@ -1462,8 +1764,9 @@ function DeathScreen({ onRespawn, onMenu }) {
 // ─── Lobby ────────────────────────────────────────────────────────────────────
 
 const WORLDS = [
-  { id: 'venice', label: 'Venice Sunset', sub: 'Warm desert dusk' },
-  { id: 'starry', label: 'Starry Night',  sub: 'Clear desert midnight' },
+  { id: 'venice',   label: 'Venice Sunset', sub: 'Warm desert dusk' },
+  { id: 'starry',   label: 'Starry Night',  sub: 'Clear desert midnight' },
+  { id: 'snowfall', label: 'Snowfall',       sub: 'Dark stronghold' },
 ]
 
 function LobbyScreen({ lobby, onJoin }) {
@@ -1827,7 +2130,7 @@ export default function App() {
   const socketRef = useRef(null)
   const dataRef   = useRef({})
   const [playerIds, setPlayerIds]   = useState([])
-  const [lobby, setLobby]           = useState({ venice: [], starry: [] })
+  const [lobby, setLobby]           = useState({ venice: [], starry: [], snowfall: [] })
   const [currentRoom, setCurrentRoom] = useState(null)
   const [myId, setMyId]             = useState(null)
   const [messages, setMessages]     = useState([])
@@ -1985,7 +2288,7 @@ export default function App() {
       <div style={{ width: '100vw', height: '100vh' }}>
         <Canvas shadows gl={{ antialias: false, toneMappingExposure: 0.8 }}
           camera={{ fov: 75, near: 0.1, far: 1000, position: [0, 1.7, 5] }}>
-          {currentRoom === 'venice' ? <SunsetScene /> : <NightScene />}
+          {currentRoom === 'venice' ? <SunsetScene /> : currentRoom === 'starry' ? <NightScene /> : <SnowfallScene />}
           <SoundListener />
         </Canvas>
 
