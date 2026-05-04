@@ -560,9 +560,158 @@ function NightScene() {
   )
 }
 
+// ─── Sound Engine ─────────────────────────────────────────────────────────────
+
+let _audioCtx = null
+
+function _getACtx() {
+  if (!_audioCtx) {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    fetch('/sounds/laser.mp3')
+      .then(r => r.arrayBuffer())
+      .then(arr => _audioCtx.decodeAudioData(arr))
+      .then(buf => { _laserAudioBuf = buf })
+  }
+  if (_audioCtx.state === 'suspended') _audioCtx.resume()
+  return _audioCtx
+}
+
+let _laserAudioBuf = null
+
+async function _getLaserBuf() {
+  if (_laserAudioBuf) return _laserAudioBuf
+  const ctx = _getACtx()
+  const res = await fetch('/sounds/laser.mp3')
+  const arr = await res.arrayBuffer()
+  _laserAudioBuf = await ctx.decodeAudioData(arr)
+  return _laserAudioBuf
+}
+
+function _playLaserBuf(detune = 0) {
+  _getLaserBuf().then(buf => {
+    const ctx = _getACtx()
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.detune.value = detune
+    const g = ctx.createGain(); g.gain.value = 0.8
+    src.connect(g); g.connect(ctx.destination)
+    src.start()
+  })
+}
+
+function playShoot(weaponId) {
+  if (weaponId === 'machine_gun') {
+    const ctx = _getACtx()
+    const frames = Math.floor(ctx.sampleRate * 0.05)
+    const buf = ctx.createBuffer(1, frames, ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames) ** 2
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const filt = ctx.createBiquadFilter()
+    filt.type = 'bandpass'; filt.frequency.value = 1200; filt.Q.value = 0.8
+    const g = ctx.createGain(); g.gain.value = 0.3
+    src.connect(filt); filt.connect(g); g.connect(ctx.destination)
+    src.start()
+    return
+  }
+  if (weaponId === 'double_laser') {
+    _playLaserBuf(0)
+    _playLaserBuf(-150)
+    return
+  }
+  _playLaserBuf(0)
+}
+
+function playHit() {
+  const ctx = _getACtx()
+  const now = ctx.currentTime
+  const osc = ctx.createOscillator(); const gain = ctx.createGain()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(200, now)
+  osc.frequency.exponentialRampToValueAtTime(35, now + 0.3)
+  gain.gain.setValueAtTime(0.7, now)
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35)
+  osc.connect(gain); gain.connect(ctx.destination)
+  osc.start(now); osc.stop(now + 0.35)
+  const frames = Math.floor(ctx.sampleRate * 0.12)
+  const buf = ctx.createBuffer(1, frames, ctx.sampleRate)
+  const data = buf.getChannelData(0)
+  for (let i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames) ** 3
+  const src = ctx.createBufferSource()
+  src.buffer = buf
+  const ng = ctx.createGain(); ng.gain.value = 0.45
+  src.connect(ng); ng.connect(ctx.destination)
+  src.start()
+}
+
+function playCoin() {
+  const ctx = _getACtx()
+  ;[523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+    const t = ctx.currentTime + i * 0.07
+    const osc = ctx.createOscillator(); const gain = ctx.createGain()
+    osc.type = 'sine'; osc.frequency.value = freq
+    gain.gain.setValueAtTime(0, t)
+    gain.gain.linearRampToValueAtTime(0.25, t + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(t); osc.stop(t + 0.15)
+  })
+}
+
+function playEnemyShoot(ox, oy, oz) {
+  _getLaserBuf().then(buf => {
+    const ctx = _getACtx()
+    const now = ctx.currentTime
+    const panner = ctx.createPanner()
+    panner.panningModel = 'HRTF'
+    panner.distanceModel = 'inverse'
+    panner.refDistance = 3
+    panner.maxDistance = 60
+    panner.rolloffFactor = 1.5
+    if (panner.positionX) {
+      panner.positionX.setValueAtTime(ox, now)
+      panner.positionY.setValueAtTime(oy, now)
+      panner.positionZ.setValueAtTime(oz, now)
+    } else {
+      panner.setPosition(ox, oy, oz)
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const g = ctx.createGain(); g.gain.value = 0.8
+    src.connect(g); g.connect(panner); panner.connect(ctx.destination)
+    src.start()
+  })
+}
+
+function SoundListener() {
+  const { camera } = useThree()
+  useFrame(() => {
+    if (!_audioCtx) return
+    const ctx = _audioCtx
+    const l = ctx.listener
+    const me = camera.matrix.elements
+    if (l.positionX) {
+      l.positionX.setValueAtTime(camera.position.x, ctx.currentTime)
+      l.positionY.setValueAtTime(camera.position.y, ctx.currentTime)
+      l.positionZ.setValueAtTime(camera.position.z, ctx.currentTime)
+      l.forwardX.setValueAtTime(-me[8],  ctx.currentTime)
+      l.forwardY.setValueAtTime(-me[9],  ctx.currentTime)
+      l.forwardZ.setValueAtTime(-me[10], ctx.currentTime)
+      l.upX.setValueAtTime(me[4], ctx.currentTime)
+      l.upY.setValueAtTime(me[5], ctx.currentTime)
+      l.upZ.setValueAtTime(me[6], ctx.currentTime)
+    } else {
+      l.setPosition(camera.position.x, camera.position.y, camera.position.z)
+      l.setOrientation(-me[8], -me[9], -me[10], me[4], me[5], me[6])
+    }
+  })
+  return null
+}
+
 // ─── Multiplayer ─────────────────────────────────────────────────────────────
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? `http://${window.location.hostname}:3001`
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? (import.meta.env.PROD ? window.location.origin : `http://${window.location.hostname}:3001`)
 const SocketContext = createContext(null)
 
 const PLAYER_COLORS = [
@@ -771,13 +920,14 @@ function Shooter() {
     const cooldown = WEAPON_COOLDOWNS[weaponId] ?? 500
     if (now - lastShot.current < cooldown) return
     lastShot.current = now
+    playShoot(weaponId)
 
     const me = camera.matrix.elements
     const nx = -me[8], ny = -me[9], nz = -me[10]
     const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
     const dx = nx / len, dy = ny / len, dz = nz / len
     const ox = camera.position.x + dx * 0.35
-    const oy = camera.position.y - 1.0
+    const oy = camera.position.y + dy * 0.35
     const oz = camera.position.z + dz * 0.35
 
     if (weaponId === 'double_laser') {
@@ -823,6 +973,7 @@ function Shooter() {
     const handler = ({ id, ox, oy, oz, dx, dy, dz }) => {
       const idx = playerIdsRef.current.indexOf(id)
       addLaser(id, ox, oy, oz, dx, dy, dz, idx >= 0 ? idx : 0)
+      playEnemyShoot(ox, oy, oz)
 
       // Ray–sphere hit check against my camera position
       const wx = camera.position.x - ox
@@ -985,7 +1136,7 @@ function ChatBox() {
 // ─── Inventory HUD ───────────────────────────────────────────────────────────
 
 function Inventory() {
-  const { myColorIndex, weapons, activeWeapon, setActiveWeapon, coins } = useContext(SocketContext)
+  const { myColorIndex, weapons, activeWeapon, setActiveWeapon, coins, leaveRoom } = useContext(SocketContext)
   const { color } = PLAYER_COLORS[myColorIndex % PLAYER_COLORS.length]
 
   useEffect(() => {
@@ -1007,7 +1158,7 @@ function Inventory() {
   return (
     <div style={{
       position: 'fixed', bottom: 52, left: '50%', transform: 'translateX(-50%)',
-      zIndex: 10, pointerEvents: 'none',
+      zIndex: 20, pointerEvents: 'none',
     }}>
       <div style={{
         background: 'rgba(0,0,0,0.52)',
@@ -1050,6 +1201,20 @@ function Inventory() {
         }}>
           <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#ffd700', boxShadow: '0 0 8px #ffd700, 0 0 16px #ffd70066' }} />
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: 'monospace' }}>{coins}</div>
+        </div>
+        <div style={{ marginLeft: 4, paddingLeft: 12, borderLeft: '1px solid rgba(255,255,255,0.10)', pointerEvents: 'auto' }}>
+          <button
+            onClick={leaveRoom}
+            style={{
+              background: 'none', border: 'none', padding: 0,
+              color: 'rgba(255,255,255,0.35)', fontSize: 11, fontFamily: 'monospace',
+              letterSpacing: '0.1em', cursor: 'pointer',
+            }}
+            onMouseEnter={e => e.target.style.color = 'rgba(255,255,255,0.85)'}
+            onMouseLeave={e => e.target.style.color = 'rgba(255,255,255,0.35)'}
+          >
+            ← LOBBY
+          </button>
         </div>
       </div>
     </div>
@@ -1216,10 +1381,78 @@ function LobbyScreen({ lobby, onJoin }) {
 
 // ─── Username Screen ──────────────────────────────────────────────────────────
 
+function SnowCanvas() {
+  const canvasRef = useRef(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    let animId
+    const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight }
+    resize()
+    window.addEventListener('resize', resize)
+
+    const flakes = Array.from({ length: 160 }, () => ({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      r: 0.8 + Math.random() * 2.2,
+      speed: 0.4 + Math.random() * 1.2,
+      drift: (Math.random() - 0.5) * 0.4,
+      opacity: 0.2 + Math.random() * 0.6,
+    }))
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      for (const f of flakes) {
+        ctx.beginPath()
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(220,235,255,${f.opacity})`
+        ctx.fill()
+        f.y += f.speed
+        f.x += f.drift
+        if (f.y > canvas.height + 4) { f.y = -4; f.x = Math.random() * canvas.width }
+        if (f.x > canvas.width + 4) f.x = -4
+        if (f.x < -4) f.x = canvas.width + 4
+      }
+      animId = requestAnimationFrame(draw)
+    }
+    draw()
+    return () => { cancelAnimationFrame(animId); window.removeEventListener('resize', resize) }
+  }, [])
+  return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+}
+
+function WinterTitle() {
+  const WORD = 'WINTER'
+  const [displayed, setDisplayed] = useState('')
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    let i = 0
+    const id = setInterval(() => {
+      i++
+      setDisplayed(WORD.slice(0, i))
+      if (i === WORD.length) { clearInterval(id); setDone(true) }
+    }, 120)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 32, letterSpacing: '0.25em', fontWeight: 300, display: 'inline-flex', alignItems: 'center' }}>
+      {displayed}
+      <span style={{
+        display: 'inline-block', width: 2, height: '1.1em', background: 'rgba(255,255,255,0.75)',
+        marginLeft: 3, verticalAlign: 'middle',
+        animation: done ? 'blink 1s step-end infinite' : 'none',
+        opacity: done ? undefined : 1,
+      }} />
+      <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>
+    </div>
+  )
+}
+
 function UsernameScreen({ onLogin, disabled }) {
   const [value, setValue] = useState('')
 
   const card = {
+    position: 'relative',
     background: 'rgba(255,255,255,0.04)',
     border: '1px solid rgba(255,255,255,0.10)',
     borderRadius: 20, padding: '28px 28px 22px', width: 260,
@@ -1235,13 +1468,15 @@ function UsernameScreen({ onLogin, disabled }) {
 
   return (
     <div style={{
+      position: 'relative', overflow: 'hidden',
       width: '100vw', height: '100vh',
       background: 'radial-gradient(ellipse at 50% 60%, #0d1a2e 0%, #060810 100%)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       fontFamily: 'monospace', gap: 48,
     }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 32, letterSpacing: '0.25em', fontWeight: 300 }}>WINTER</div>
+      <SnowCanvas />
+      <div style={{ textAlign: 'center', position: 'relative' }}>
+        <WinterTitle />
         <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11, letterSpacing: '0.15em', marginTop: 6 }}>ENTER USERNAME</div>
       </div>
       <div style={card}>
@@ -1438,6 +1673,7 @@ export default function App() {
   const collectCoin = useCallback((idx) => {
     setCollectedCoins(prev => {
       if (prev.has(idx)) return prev
+      playCoin()
       const next = new Set(prev); next.add(idx)
       setCoins(c => c + 1)
       return next
@@ -1481,6 +1717,7 @@ export default function App() {
   }, [])
 
   const onKicked = useCallback(() => {
+    playHit()
     setHitFlash(true)
     setTimeout(() => { setHitFlash(false); setShowDeathScreen(true) }, 420)
   }, [])
@@ -1498,7 +1735,7 @@ export default function App() {
     return idx >= 0 ? idx : 0
   }, [myId, currentRoom, lobby])
 
-  const ctx = { socketRef, dataRef, playerIds, myId, messages, sendChat, myColorIndex, onKicked, dyingRef, dyingIds, username, weapons, activeWeapon, setActiveWeapon, coins, collectCoin, collectedCoins, spendCoins }
+  const ctx = { socketRef, dataRef, playerIds, myId, messages, sendChat, myColorIndex, onKicked, dyingRef, dyingIds, username, weapons, activeWeapon, setActiveWeapon, coins, collectCoin, collectedCoins, spendCoins, leaveRoom }
 
   if (!username) return (
     <SocketContext.Provider value={ctx}>
@@ -1518,6 +1755,7 @@ export default function App() {
         <Canvas shadows gl={{ antialias: false, toneMappingExposure: 0.8 }}
           camera={{ fov: 75, near: 0.1, far: 1000, position: [0, 1.7, 5] }}>
           {currentRoom === 'venice' ? <SunsetScene /> : <NightScene />}
+          <SoundListener />
         </Canvas>
 
         <ChatBox />
@@ -1541,19 +1779,6 @@ export default function App() {
         )}
 
         {shopOpen && <ShopScreen onClose={() => setShopOpen(false)} />}
-
-        <button
-          onClick={leaveRoom}
-          style={{
-            position: 'fixed', top: 20, left: 20, zIndex: 10,
-            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 10, padding: '8px 16px',
-            color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: 'monospace',
-            letterSpacing: '0.1em', cursor: 'pointer',
-          }}
-        >
-          ← LOBBY
-        </button>
 
         <div style={{
           position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',

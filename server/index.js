@@ -1,10 +1,18 @@
 const { createServer } = require('http')
+const express = require('express')
 const { Server } = require('socket.io')
 const fs   = require('fs')
 const path = require('path')
 
-const httpServer = createServer()
+const app = express()
+const httpServer = createServer(app)
 const io = new Server(httpServer, { cors: { origin: '*' } })
+
+const DIST = path.join(__dirname, '../dist')
+if (fs.existsSync(DIST)) {
+  app.use(express.static(DIST))
+  app.get('*', (_, res) => res.sendFile(path.join(DIST, 'index.html')))
+}
 
 const USERS_FILE = path.join(__dirname, 'users.json')
 
