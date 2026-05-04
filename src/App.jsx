@@ -284,6 +284,22 @@ const BOX_COLLIDERS = [
   [ 7.5,  8.5,  -4.5,  -3.5, 1.0 ], // orange cube
   [-8.5, -7.5, -12.5, -11.5, 1.0 ], // brown cube
   [-5.2, -2.8,  -6.6,  -5.4, 0.75], // desk (approximate)
+  // parkour course
+  [12.25, 15.75, -1.75,  1.75,  2],
+  [18.75, 21.25, -5.25, -2.75,  5],
+  [14,    16,    -9,    -7,     8],
+  [19,    21,    -13,   -11,   11],
+  [14,    16,    -17,   -15,   14],
+  [18.75, 21.25, -21.25,-18.75,17],
+]
+
+const PARKOUR_PLATFORMS = [
+  { pos: [14,   1,    0], size: [3.5, 2,  3.5], color: '#d4c5a0', roughness: 0.9  },
+  { pos: [20,   2.5, -4], size: [2.5, 5,  2.5], color: '#b8a88a', roughness: 0.85 },
+  { pos: [15,   4,   -8], size: [2,   8,  2],   color: '#9a8870', roughness: 0.8  },
+  { pos: [20,   5.5,-12], size: [2,   11, 2],   color: '#806855', roughness: 0.8  },
+  { pos: [15,   7,  -16], size: [2,   14, 2],   color: '#663f2e', roughness: 0.75 },
+  { pos: [20,   8.5,-20], size: [2.5, 17, 2.5], color: '#4a2d1e', roughness: 0.7  },
 ]
 
 // [cx, cz, radius, topY] — skip tiny pebbles (sx < 0.9)
@@ -402,6 +418,12 @@ function Objects() {
             color={color} metalness={metalness} roughness={roughness}
             emissive={emissive} emissiveIntensity={emissiveIntensity}
           />
+        </mesh>
+      ))}
+      {PARKOUR_PLATFORMS.map(({ pos, size, color, roughness }, i) => (
+        <mesh key={'pk' + i} position={pos} castShadow receiveShadow>
+          <boxGeometry args={size} />
+          <meshStandardMaterial color={color} roughness={roughness} metalness={0} />
         </mesh>
       ))}
       <Rocks />
@@ -1612,6 +1634,7 @@ export default function App() {
   const [shopOpen, setShopOpen]     = useState(false)
   const dyingRef     = useRef({})
   const [dyingIds, setDyingIds]     = useState([])
+  const isDeadRef    = useRef(false)
   const playerIdsRef = useRef([])
   playerIdsRef.current = playerIds
 
@@ -1717,16 +1740,17 @@ export default function App() {
   }, [])
 
   const onKicked = useCallback(() => {
+    if (isDeadRef.current) return
+    isDeadRef.current = true
     playHit()
     setHitFlash(true)
-    setTimeout(() => { setHitFlash(false); setShowDeathScreen(true) }, 420)
+    setTimeout(() => { setHitFlash(false); setShowDeathScreen(true) }, 600)
   }, [])
 
   const respawn = useCallback(() => {
+    isDeadRef.current = false
     setShowDeathScreen(false)
     socketRef.current?.emit('join_room', currentRoom)
-    dataRef.current = {}
-    setPlayerIds([])
   }, [currentRoom])
 
   const myColorIndex = useMemo(() => {
