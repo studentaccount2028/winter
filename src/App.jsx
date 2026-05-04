@@ -528,6 +528,7 @@ function Car() {
     nearCarRef.current = !inCarRef.current && Math.sqrt(dx * dx + dz * dz) < CAR_ENTER_DIST
 
     if (!inCarRef.current) {
+      _carHUD.inCar = false
       const vel = bodyRef.current.linvel()
       bodyRef.current.setLinvel({ x: vel.x * 0.85, y: vel.y, z: vel.z * 0.85 }, true)
       return
@@ -554,6 +555,9 @@ function Car() {
     camera.position.x = pos.x - Math.sin(carAngle.current) * 0.3
     camera.position.y = pos.y + 0.9
     camera.position.z = pos.z - Math.cos(carAngle.current) * 0.3
+
+    _carHUD.speed = Math.abs(carSpeed.current) * CAR_MPH_SCALE
+    _carHUD.inCar = true
   })
 
   const WHEEL_POSITIONS = [[-1.05, -0.25, 1.5], [1.05, -0.25, 1.5], [-1.05, -0.25, -1.5], [1.05, -0.25, -1.5]]
@@ -889,6 +893,9 @@ const CAR_ACCELERATION = 14
 const CAR_DRAG         = 3.5
 const CAR_TURN_SPEED   = 1.6
 const CAR_ENTER_DIST   = 4
+const CAR_MPH_SCALE    = 4.0
+
+const _carHUD = { speed: 0, inCar: false }
 
 const PLAYER_COLORS = [
   { color: '#ff6600', emissive: '#ff3300', emissiveIntensity: 4 },
@@ -1707,6 +1714,52 @@ function CrosshairHUD() {
   )
 }
 
+// ─── Speedometer ─────────────────────────────────────────────────────────────
+
+function Speedometer() {
+  const [mph, setMph] = useState(0)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    let id
+    const tick = () => {
+      setMph(Math.round(_carHUD.speed))
+      setVisible(_carHUD.inCar)
+      id = requestAnimationFrame(tick)
+    }
+    id = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(id)
+  }, [])
+
+  if (!visible) return null
+
+  const pct = Math.min(mph / (CAR_MAX_SPEED * CAR_MPH_SCALE), 1)
+  const barColor = pct < 0.5 ? '#00e5ff' : pct < 0.8 ? '#ffcc00' : '#ff4444'
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 48, right: 32,
+      background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: 14, padding: '12px 20px', backdropFilter: 'blur(12px)',
+      fontFamily: 'monospace', pointerEvents: 'none', minWidth: 110, zIndex: 20,
+    }}>
+      <div style={{ fontSize: 42, fontWeight: 700, color: '#fff', lineHeight: 1, letterSpacing: '-0.02em' }}>
+        {mph}
+      </div>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.18em', marginTop: 2 }}>
+        MPH
+      </div>
+      <div style={{ marginTop: 8, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${pct * 100}%`,
+          background: barColor, borderRadius: 2,
+          transition: 'width 0.05s linear, background 0.2s',
+        }} />
+      </div>
+    </div>
+  )
+}
+
 // ─── Shop ─────────────────────────────────────────────────────────────────────
 
 function ShopScreen({ onClose }) {
@@ -1941,6 +1994,7 @@ export default function App() {
         <Inventory />
 
         <CrosshairHUD />
+        <Speedometer />
 
         {hitFlash && (
           <div style={{
