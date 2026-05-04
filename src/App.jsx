@@ -889,8 +889,8 @@ const CarContext = createContext(null)
 
 const CAR_MAX_SPEED    = 25
 const CAR_REVERSE_MAX  = 8
-const CAR_ACCELERATION = 14
-const CAR_DRAG         = 3.5
+const CAR_ACCELERATION = 30
+const CAR_DRAG         = 1.0
 const CAR_TURN_SPEED   = 1.6
 const CAR_ENTER_DIST   = 4
 const CAR_MPH_SCALE    = 4.5
