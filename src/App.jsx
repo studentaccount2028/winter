@@ -6,7 +6,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js'
 import { io } from 'socket.io-client'
 import { EffectComposer, Bloom, ToneMapping, SMAA, N8AO, GodRays } from '@react-three/postprocessing'
 import { ToneMappingMode } from 'postprocessing'
-import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier'
+import { Physics, RigidBody, CuboidCollider, CylinderCollider } from '@react-three/rapier'
 
 const SPEED = 6
 
@@ -459,6 +459,27 @@ function Orion() {
   )
 }
 
+// ─── World physics colliders (for car) ───────────────────────────────────────
+
+function WorldColliders() {
+  return (
+    <>
+      {BOX_COLLIDERS.map(([minX, maxX, minZ, maxZ, topY], i) => (
+        <RigidBody key={'b' + i} type="fixed"
+          position={[(minX + maxX) / 2, topY / 2, (minZ + maxZ) / 2]}
+        >
+          <CuboidCollider args={[(maxX - minX) / 2, topY / 2, (maxZ - minZ) / 2]} />
+        </RigidBody>
+      ))}
+      {ROCK_COLLIDERS.map(([cx, cz, radius, topY], i) => (
+        <RigidBody key={'r' + i} type="fixed" position={[cx, 0, cz]}>
+          <CylinderCollider args={[topY / 2, radius]} position={[0, topY / 2, 0]} />
+        </RigidBody>
+      ))}
+    </>
+  )
+}
+
 // ─── Car ─────────────────────────────────────────────────────────────────────
 
 function Car() {
@@ -634,6 +655,7 @@ function SunsetScene() {
         <RigidBody type="fixed">
           <CuboidCollider args={[250, 0.5, 250]} position={[0, -0.5, 0]} />
         </RigidBody>
+        <WorldColliders />
         <Car />
       </Physics>
     </>
