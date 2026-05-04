@@ -1,5 +1,5 @@
 [phases.install]
-cmds = ["npm ci", "npm ci --prefix server"]
+cmds = ["npm install", "npm install --prefix server"]
 
 [phases.build]
 cmds = ["npm run build"]
