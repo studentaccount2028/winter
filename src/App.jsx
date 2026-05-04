@@ -6,6 +6,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js'
 import { io } from 'socket.io-client'
 import { EffectComposer, Bloom, ToneMapping, SMAA, N8AO, GodRays } from '@react-three/postprocessing'
 import { ToneMappingMode } from 'postprocessing'
+import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier'
 
 const SPEED = 6
 
@@ -30,6 +31,7 @@ function Player() {
   const bobPhase = useRef(0)
   const bobStrength = useRef(0)
   const { camera } = useThree()
+  const carCtx = useContext(CarContext)
 
   useEffect(() => {
     const down = (e) => {
@@ -58,6 +60,7 @@ function Player() {
   useFrame((_, delta) => {
     const ctrl = controlsRef.current
     if (!ctrl?.isLocked) return
+    if (carCtx?.inCarRef.current) return
 
     const { w, a, s, d } = keys.current
 
@@ -456,12 +459,125 @@ function Orion() {
   )
 }
 
+// ─── Car ─────────────────────────────────────────────────────────────────────
+
+function Car() {
+  const { camera } = useThree()
+  const bodyRef = useRef()
+  const carAngle = useRef(0)
+  const carSpeed = useRef(0)
+  const carKeys = useRef({ w: false, a: false, s: false, d: false })
+  const { inCarRef, nearCarRef } = useContext(CarContext)
+
+  useEffect(() => {
+    const handle = (e) => {
+      if (document.activeElement?.tagName === 'INPUT') return
+      const down = e.type === 'keydown'
+      if (e.code === 'KeyW') carKeys.current.w = down
+      if (e.code === 'KeyS') carKeys.current.s = down
+      if (e.code === 'KeyA') carKeys.current.a = down
+      if (e.code === 'KeyD') carKeys.current.d = down
+      if (e.code === 'KeyE' && down) {
+        if (inCarRef.current) {
+          inCarRef.current = false
+          carKeys.current = { w: false, a: false, s: false, d: false }
+          carSpeed.current *= 0.1
+          if (bodyRef.current) {
+            const pos = bodyRef.current.translation()
+            const sideX = Math.cos(carAngle.current)
+            const sideZ = -Math.sin(carAngle.current)
+            camera.position.set(pos.x + sideX * 2.5, pos.y + 1.7, pos.z + sideZ * 2.5)
+          }
+        } else if (nearCarRef.current) {
+          inCarRef.current = true
+        }
+      }
+    }
+    window.addEventListener('keydown', handle)
+    window.addEventListener('keyup', handle)
+    return () => { window.removeEventListener('keydown', handle); window.removeEventListener('keyup', handle) }
+  }, [inCarRef, nearCarRef, camera])
+
+  useFrame((_, delta) => {
+    if (!bodyRef.current) return
+
+    const pos = bodyRef.current.translation()
+    const dx = camera.position.x - pos.x
+    const dz = camera.position.z - pos.z
+    nearCarRef.current = !inCarRef.current && Math.sqrt(dx * dx + dz * dz) < CAR_ENTER_DIST
+
+    if (!inCarRef.current) {
+      const vel = bodyRef.current.linvel()
+      bodyRef.current.setLinvel({ x: vel.x * 0.85, y: vel.y, z: vel.z * 0.85 }, true)
+      return
+    }
+
+    const { w, a, s, d } = carKeys.current
+    const steer = (a ? 1 : 0) - (d ? 1 : 0)
+    if (Math.abs(carSpeed.current) > 0.3) {
+      carAngle.current += steer * CAR_TURN_SPEED * delta * Math.sign(carSpeed.current)
+    }
+
+    const throttle = (w ? 1 : 0) - (s ? 1 : 0)
+    carSpeed.current += throttle * CAR_ACCELERATION * delta
+    carSpeed.current -= carSpeed.current * CAR_DRAG * delta
+    carSpeed.current = Math.max(-CAR_REVERSE_MAX, Math.min(CAR_MAX_SPEED, carSpeed.current))
+
+    const vx = Math.sin(carAngle.current) * carSpeed.current
+    const vz = Math.cos(carAngle.current) * carSpeed.current
+    bodyRef.current.setLinvel({ x: vx, y: bodyRef.current.linvel().y, z: vz }, true)
+
+    const hy = carAngle.current / 2
+    bodyRef.current.setRotation({ x: 0, y: Math.sin(hy), z: 0, w: Math.cos(hy) }, true)
+
+    camera.position.x = pos.x - Math.sin(carAngle.current) * 0.3
+    camera.position.y = pos.y + 0.9
+    camera.position.z = pos.z - Math.cos(carAngle.current) * 0.3
+  })
+
+  const WHEEL_POSITIONS = [[-1.05, -0.25, 1.5], [1.05, -0.25, 1.5], [-1.05, -0.25, -1.5], [1.05, -0.25, -1.5]]
+
+  return (
+    <RigidBody ref={bodyRef} position={[6, 1, 2]}
+      enabledRotations={[false, true, false]}
+      linearDamping={0.4} angularDamping={20} mass={600} restitution={0.05} friction={0.9}
+    >
+      {/* Chassis */}
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[2, 0.65, 4.2]} />
+        <meshStandardMaterial color="#c0392b" metalness={0.7} roughness={0.2} />
+      </mesh>
+      {/* Cabin */}
+      <mesh castShadow receiveShadow position={[0, 0.62, 0.15]}>
+        <boxGeometry args={[1.75, 0.72, 2.3]} />
+        <meshStandardMaterial color="#962d22" metalness={0.5} roughness={0.35} />
+      </mesh>
+      {/* Windshield */}
+      <mesh position={[0, 0.62, 1.42]}>
+        <boxGeometry args={[1.7, 0.68, 0.08]} />
+        <meshStandardMaterial color="#aaddff" transparent opacity={0.35} roughness={0} metalness={0.1} />
+      </mesh>
+      {/* Wheels */}
+      {WHEEL_POSITIONS.map(([x, y, z], i) => (
+        <mesh key={i} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <cylinderGeometry args={[0.38, 0.38, 0.28, 14]} />
+          <meshStandardMaterial color="#111" roughness={0.95} />
+        </mesh>
+      ))}
+    </RigidBody>
+  )
+}
+
 // ─── Venice Sunset ────────────────────────────────────────────────────────────
 
 function SunsetScene() {
   const [sun, setSun] = useState(null)
+  const inCarRef = useRef(false)
+  const nearCarRef = useRef(false)
+  const carCtx = useMemo(() => ({ inCarRef, nearCarRef }), [])
 
   return (
+    <CarContext.Provider value={carCtx}>
     <>
       <fogExp2 attach="fog" args={['#c8a890', 0.03]} />
 
@@ -513,7 +629,15 @@ function SunsetScene() {
       <Multiplayer />
       <Shooter />
       <Coins />
+
+      <Physics gravity={[0, -20, 0]}>
+        <RigidBody type="fixed">
+          <CuboidCollider args={[250, 0.5, 250]} position={[0, -0.5, 0]} />
+        </RigidBody>
+        <Car />
+      </Physics>
     </>
+    </CarContext.Provider>
   )
 }
 
@@ -735,6 +859,14 @@ function SoundListener() {
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? (import.meta.env.PROD ? window.location.origin : `http://${window.location.hostname}:3001`)
 const SocketContext = createContext(null)
+const CarContext = createContext(null)
+
+const CAR_MAX_SPEED    = 22
+const CAR_REVERSE_MAX  = 8
+const CAR_ACCELERATION = 14
+const CAR_DRAG         = 3.5
+const CAR_TURN_SPEED   = 1.6
+const CAR_ENTER_DIST   = 4
 
 const PLAYER_COLORS = [
   { color: '#ff6600', emissive: '#ff3300', emissiveIntensity: 4 },
@@ -1809,7 +1941,7 @@ export default function App() {
           color: '#fff', opacity: 0.4, fontSize: 13, fontFamily: 'monospace',
           pointerEvents: 'none', whiteSpace: 'nowrap',
         }}>
-          Click to capture mouse · WASD move · Space jump · Scroll/1-3 weapon · B shop · Esc release
+          Click to capture mouse · WASD move · Space jump · E enter/exit car · Scroll/1-3 weapon · B shop · Esc release
         </div>
       </div>
     </SocketContext.Provider>
